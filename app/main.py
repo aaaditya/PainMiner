@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from app.crawler import search_reddit
@@ -12,5 +12,11 @@ class AnalyzeRequest(BaseModel):
 
 @app.post("/analyze")
 def analyze(request: AnalyzeRequest):
-    posts = search_reddit(request.keyword)
+    try:
+        posts = search_reddit(request.keyword)
+    except EnvironmentError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
     return {"keyword": request.keyword, "posts": posts}
