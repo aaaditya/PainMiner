@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from app.crawler import search_reddit
+from app.extractor import extract_problem
 
 app = FastAPI(title="PainMiner")
 
@@ -19,4 +20,5 @@ def analyze(request: AnalyzeRequest):
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
-    return {"keyword": request.keyword, "posts": posts}
+    opportunities = [extract_problem(post) for post in posts]
+    return {"keyword": request.keyword, "opportunities": opportunities}
