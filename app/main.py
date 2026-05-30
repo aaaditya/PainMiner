@@ -3,6 +3,7 @@ from pydantic import BaseModel
 
 from app.crawler import search_reddit
 from app.extractor import extract_problem
+from app.scorer import score_opportunity
 
 app = FastAPI(title="PainMiner")
 
@@ -20,5 +21,14 @@ def analyze(request: AnalyzeRequest):
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
-    opportunities = [extract_problem(post) for post in posts]
-    return {"keyword": request.keyword, "opportunities": opportunities}
+    opportunities = sorted(
+        [score_opportunity(extract_problem(post), post) for post in posts],
+        key=lambda o: o["opportunity_score"],
+        reverse=True,
+    )
+
+    return {
+        "keyword": request.keyword,
+        "total_posts": len(posts),
+        "opportunities": opportunities,
+    }
