@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from firecrawl.v2.client import FirecrawlClient
 from firecrawl.v2.types import Document, ScrapeOptions, SearchResultWeb
@@ -34,8 +35,6 @@ class FirecrawlSource(DataSource):
             raise EnvironmentError(
                 "FIRECRAWL_API_KEY environment variable must be set."
             )
-        # FirecrawlClient also reads FIRECRAWL_API_KEY automatically, but we
-        # check early to give a clear error message before any network call.
         self._client = FirecrawlClient(api_key=api_key)
 
     # ------------------------------------------------------------------
@@ -69,6 +68,70 @@ class FirecrawlSource(DataSource):
 
         logger.info("Firecrawl returned %d posts", len(posts))
         return posts
+
+    def search_expanded(
+        self,
+        keyword: str,
+        expanded_terms: list[str],
+        limit_per_term: int = 8,
+        max_total: int = 30,
+    ) -> list[dict]:
+        """Search the original keyword plus all expanded terms concurrently.
+
+        All searches run in parallel via a ThreadPoolExecutor. Results are
+        merged and deduplicated by URL. The original keyword is always
+        included so its posts are never lost.
+
+        Args:
+            keyword:        The original search term.
+            expanded_terms: Additional operator-pain-focused search terms.
+            limit_per_term: Max results to fetch per individual search.
+            max_total:      Hard cap on total unique posts returned.
+
+        Returns:
+            Deduplicated list of normalized post dicts, up to *max_total*.
+        """
+        all_terms = [keyword] + expanded_terms
+        logger.info(
+            "Expanded search: %d terms (original + %d expanded), limit_per_term=%d",
+            len(all_terms), len(expanded_terms), limit_per_term,
+        )
+
+        results_by_term: dict[str, list[dict]] = {}
+        with ThreadPoolExecutor(max_workers=len(all_terms)) as executor:
+            future_to_term = {
+                executor.submit(self.search, term, limit_per_term): term
+                for term in all_terms
+            }
+            for future in as_completed(future_to_term):
+                term = future_to_term[future]
+                try:
+                    results_by_term[term] = future.result()
+                    logger.info("  %r → %d posts", term, len(results_by_term[term]))
+                except Exception as exc:
+                    logger.warning("Search failed for term %r: %s", term, exc)
+                    results_by_term[term] = []
+
+        # Merge: original keyword first, then expanded terms in order
+        seen_urls: set[str] = set()
+        merged: list[dict] = []
+
+        for term in all_terms:
+            for post in results_by_term.get(term, []):
+                url = post.get("url", "")
+                if url and url not in seen_urls:
+                    seen_urls.add(url)
+                    merged.append(post)
+                if len(merged) >= max_total:
+                    break
+            if len(merged) >= max_total:
+                break
+
+        logger.info(
+            "Expanded search complete: %d unique posts from %d terms",
+            len(merged), len(all_terms),
+        )
+        return merged
 
     def search_urls(self, keyword: str, limit: int = 25) -> list[dict]:
         """Quick URL-only search — no page scraping.

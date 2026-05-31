@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from app.ai_extractor import extract_opportunities
 from app.clusterer import cluster_opportunities
+from app.expander import expand_keyword
 from app.scorer import score_opportunity
 from app.sources.firecrawl_source import FirecrawlSource
 
@@ -26,22 +27,24 @@ class KeywordRequest(BaseModel):
     keyword: str
 
 
-def _collect_and_score(keyword: str) -> tuple[list[dict], list[dict]]:
-    """Shared pipeline: fetch posts → extract (concurrent) → score."""
+def _collect_and_score(keyword: str) -> tuple[list[dict], list[dict], list[str]]:
+    """Shared pipeline: expand → fetch (concurrent multi-term) → extract → score.
+
+    Returns (posts, scored_opportunities, expanded_terms).
+    """
     source = _get_source()
-    posts = source.search(keyword)
+
+    expanded_terms = expand_keyword(keyword)
+    posts = source.search_expanded(keyword, expanded_terms)
 
     opportunities = extract_opportunities(posts)
 
     scored = sorted(
-        [
-            score_opportunity(opp, post)
-            for opp, post in zip(opportunities, posts)
-        ],
+        [score_opportunity(opp, post) for opp, post in zip(opportunities, posts)],
         key=lambda o: o["opportunity_score"],
         reverse=True,
     )
-    return posts, scored
+    return posts, scored, expanded_terms
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +54,7 @@ def _collect_and_score(keyword: str) -> tuple[list[dict], list[dict]]:
 @app.post("/analyze")
 def analyze(request: KeywordRequest):
     try:
-        posts, opportunities = _collect_and_score(request.keyword)
+        posts, opportunities, expanded_terms = _collect_and_score(request.keyword)
     except EnvironmentError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
     except Exception as exc:
@@ -59,6 +62,7 @@ def analyze(request: KeywordRequest):
 
     return {
         "keyword": request.keyword,
+        "expanded_terms": expanded_terms,
         "total_posts": len(posts),
         "opportunities": opportunities,
     }
@@ -70,9 +74,9 @@ def analyze(request: KeywordRequest):
 
 @app.post("/analyze-market")
 def analyze_market(request: KeywordRequest):
-    """Full market analysis: collect → extract → score → cluster into themes."""
+    """Full market analysis: expand → collect → extract → score → cluster."""
     try:
-        _, scored = _collect_and_score(request.keyword)
+        _, scored, expanded_terms = _collect_and_score(request.keyword)
     except EnvironmentError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
     except Exception as exc:
@@ -82,6 +86,7 @@ def analyze_market(request: KeywordRequest):
 
     return {
         "market": request.keyword,
+        "expanded_terms": expanded_terms,
         "clusters": clusters,
     }
 
