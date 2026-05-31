@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from app.ai_extractor import extract_opportunities
+from app.buyer_discovery import discover_buyers
 from app.clusterer import cluster_opportunities
 from app.expander import expand_keyword
 from app.saas_generator import generate_saas_ideas
@@ -136,4 +137,36 @@ def test_search(request: KeywordRequest):
     return {
         "urls_found": [i["url"] for i in items],
         "sample_titles": [i["title"] for i in items],
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /discover-buyers
+# ---------------------------------------------------------------------------
+
+class BuyerDiscoveryRequest(BaseModel):
+    problem: str
+    buyer_type: str
+    industry: str
+
+
+@app.post("/discover-buyers")
+def discover_buyers_endpoint(request: BuyerDiscoveryRequest):
+    """Generate a buyer profile for a specific problem + buyer context.
+
+    Accepts a cluster-level input (problem, buyer_type, industry) and
+    returns company_types, buyer_roles, search_keywords, and outreach_angles.
+    """
+    try:
+        profile = discover_buyers(request.problem, request.buyer_type, request.industry)
+    except EnvironmentError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Buyer discovery error: {exc}")
+
+    return {
+        "problem": request.problem,
+        "buyer_type": request.buyer_type,
+        "industry": request.industry,
+        **profile,
     }
