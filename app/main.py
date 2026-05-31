@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from app.ai_extractor import extract_opportunities
 from app.clusterer import cluster_opportunities
 from app.expander import expand_keyword
+from app.saas_generator import generate_saas_ideas
 from app.scorer import score_opportunity
 from app.sources.firecrawl_source import FirecrawlSource
 
@@ -33,12 +34,9 @@ def _collect_and_score(keyword: str) -> tuple[list[dict], list[dict], list[str]]
     Returns (posts, scored_opportunities, expanded_terms).
     """
     source = _get_source()
-
     expanded_terms = expand_keyword(keyword)
     posts = source.search_expanded(keyword, expanded_terms)
-
     opportunities = extract_opportunities(posts)
-
     scored = sorted(
         [score_opportunity(opp, post) for opp, post in zip(opportunities, posts)],
         key=lambda o: o["opportunity_score"],
@@ -88,6 +86,35 @@ def analyze_market(request: KeywordRequest):
         "market": request.keyword,
         "expanded_terms": expanded_terms,
         "clusters": clusters,
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /generate-saas
+# ---------------------------------------------------------------------------
+
+@app.post("/generate-saas")
+def generate_saas(request: KeywordRequest):
+    """Full pipeline: expand → collect → extract → score → cluster → generate SaaS ideas.
+
+    Returns clusters plus ranked SaaS opportunities, each with name, pitch,
+    pricing model, MVP features, GTM strategy, and rank_score.
+    """
+    try:
+        _, scored, expanded_terms = _collect_and_score(request.keyword)
+    except EnvironmentError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Search error: {exc}")
+
+    clusters = cluster_opportunities(scored)
+    saas_opportunities = generate_saas_ideas(clusters)
+
+    return {
+        "market": request.keyword,
+        "expanded_terms": expanded_terms,
+        "clusters": clusters,
+        "saas_opportunities": saas_opportunities,
     }
 
 
