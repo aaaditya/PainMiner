@@ -1,3 +1,7 @@
+from dotenv import load_dotenv
+
+load_dotenv()  # loads .env from project root if present; no-op otherwise
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
