@@ -5,7 +5,7 @@ load_dotenv()  # loads .env from project root if present; no-op otherwise
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from app.ai_extractor import extract_opportunity
+from app.ai_extractor import extract_opportunities
 from app.clusterer import cluster_opportunities
 from app.scorer import score_opportunity
 from app.sources.firecrawl_source import FirecrawlSource
@@ -27,11 +27,17 @@ class KeywordRequest(BaseModel):
 
 
 def _collect_and_score(keyword: str) -> tuple[list[dict], list[dict]]:
-    """Shared logic: fetch posts → extract → score. Returns (posts, scored_opps)."""
+    """Shared pipeline: fetch posts → extract (concurrent) → score."""
     source = _get_source()
     posts = source.search(keyword)
+
+    opportunities = extract_opportunities(posts)
+
     scored = sorted(
-        [score_opportunity(extract_opportunity(post), post) for post in posts],
+        [
+            score_opportunity(opp, post)
+            for opp, post in zip(opportunities, posts)
+        ],
         key=lambda o: o["opportunity_score"],
         reverse=True,
     )
