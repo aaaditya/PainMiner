@@ -1,0 +1,3 @@
+rank,saas_name,one_line_pitch,ideal_customer,pricing_model,rank_score,source_cluster
+1,TenantLoop,Close the gap between landlord requests and tenant responses in under 60 seconds.,Property manager handling 50-300 residential units,"Per-unit SaaS, $2/unit/mo",8.79,Tenant Communication
+2,RentChase,Stop chasing rent manually — automate reminders and online payments for property managers.,Property manager with 20-150 units,"Per-unit SaaS, $1.50/unit/mo",7.9,Late Rent Collection

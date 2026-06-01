@@ -9,6 +9,10 @@ from app.ai_extractor import extract_opportunities
 from app.buyer_discovery import discover_buyers_for_clusters
 from app.company_discovery import deduplicate_companies, discover_companies_for_clusters, discover_score_filter
 from app.decision_maker_discovery import discover_decision_makers_batch
+from app.exporter import (
+    export_opportunities_csv, export_companies_csv,
+    export_decision_makers_csv, export_saas_ideas_csv,
+)
 from app.clusterer import cluster_opportunities
 from app.expander import expand_keyword
 from app.saas_generator import generate_saas_ideas
@@ -318,4 +322,100 @@ def discover_decision_makers_endpoint(request: KeywordRequest):
         "buyer_profiles": [p.model_dump() for p in buyer_profiles],
         "companies": filtered_companies,
         "decision_makers": [dm.model_dump() for dm in dm_results],
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /export-csv
+# ---------------------------------------------------------------------------
+
+@app.post("/export-csv")
+def export_csv(request: KeywordRequest):
+    """Full pipeline → four CSV files.
+
+    Runs: expand → crawl → extract → score → cluster → companies →
+          decision makers → SaaS ideas, then writes:
+            opportunities.csv
+            companies.csv
+            decision_makers.csv
+            saas_ideas.csv
+    to exports/<keyword>/ on the server.
+    """
+    import time as _time
+    t_start = _time.perf_counter()
+
+    # ── 1. Core pipeline ──────────────────────────────────────────────────
+    try:
+        posts, scored_opps, expanded_terms = _collect_and_score(request.keyword)
+    except EnvironmentError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Pipeline error: {exc}")
+
+    clusters = cluster_opportunities(scored_opps)
+    buyer_profiles = discover_buyers_for_clusters(clusters)
+    _, filtered_companies, company_metrics = discover_score_filter(
+        clusters, buyer_profiles
+    )
+
+    # ── 2. Decision makers (top 3 companies per cluster) ─────────────────
+    clusters_by_name = {c["cluster_name"]: c for c in clusters}
+    buyer_roles_by_cluster = {p.cluster_name: p.buyer_roles for p in buyer_profiles}
+
+    top_companies: list[dict] = []
+    seen: dict[str, int] = {}
+    for company in filtered_companies:
+        cl = company.get("cluster", "")
+        if seen.get(cl, 0) < 3:
+            top_companies.append(company)
+            seen[cl] = seen.get(cl, 0) + 1
+
+    dm_results = discover_decision_makers_batch(
+        top_companies, clusters_by_name, buyer_roles_by_cluster
+    )
+
+    # ── 3. SaaS ideas ─────────────────────────────────────────────────────
+    saas_ideas = generate_saas_ideas(clusters)
+
+    # ── 4. Export to CSV ──────────────────────────────────────────────────
+    kw = request.keyword
+
+    opp_path, opp_count, opp_sample = export_opportunities_csv(
+        kw, scored_opps, clusters, buyer_profiles
+    )
+    co_path, co_count, co_sample = export_companies_csv(kw, filtered_companies)
+    dm_path, dm_count, dm_sample = export_decision_makers_csv(kw, dm_results)
+    saas_path, saas_count, saas_sample = export_saas_ideas_csv(kw, saas_ideas)
+
+    elapsed = round(_time.perf_counter() - t_start, 1)
+
+    return {
+        "keyword": kw,
+        "processing_time_s": elapsed,
+        "csv_files": [
+            str(opp_path), str(co_path), str(dm_path), str(saas_path)
+        ],
+        "row_counts": {
+            "opportunities": opp_count,
+            "companies": co_count,
+            "decision_makers": dm_count,
+            "saas_ideas": saas_count,
+        },
+        "download_paths": {
+            "opportunities": str(opp_path),
+            "companies": str(co_path),
+            "decision_makers": str(dm_path),
+            "saas_ideas": str(saas_path),
+        },
+        "sample_rows": {
+            "opportunities": opp_sample,
+            "companies": co_sample,
+            "decision_makers": dm_sample,
+            "saas_ideas": saas_sample,
+        },
+        "market_summary": {
+            "total_posts": len(posts),
+            "total_clusters": len(clusters),
+            **company_metrics,
+        },
     }

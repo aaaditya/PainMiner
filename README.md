@@ -199,6 +199,29 @@ python scripts/batch_analysis.py
 Runs the full pipeline across 10 niches and prints a ranked market report.
 
 
+
+## CSV Export
+
+`app/exporter.py` --- `POST /export-csv`
+
+Runs the full pipeline and writes four CSV files to `exports/<keyword>/` for import into Clay, Apollo, HubSpot, Instantly, or any spreadsheet.
+
+### Files generated
+
+| File | Columns |
+|---|---|
+| `opportunities.csv` | keyword, cluster, problem, buyer_role, severity_score, urgency_score, opportunity_score, outreach_angle |
+| `companies.csv` | cluster, company_name, website, location, employee_range, why_match |
+| `decision_makers.csv` | company, website, cluster, title, seniority, department, buying_power, linkedin_query, reason |
+| `saas_ideas.csv` | rank, saas_name, one_line_pitch, ideal_customer, pricing_model, rank_score, source_cluster |
+
+### CRM import tips
+
+- **Clay**: import `companies.csv` and enrich with Clay waterfall
+- **Apollo**: import `companies.csv`, use `website` for domain matching
+- **HubSpot**: import `companies.csv` as Companies, `decision_makers.csv` as Contacts
+- **Instantly**: use `linkedin_query` to find emails via enrichment
+
 ## Decision maker discovery
 
 `app/decision_maker_discovery.py` — `discover_decision_makers(company, cluster)`
