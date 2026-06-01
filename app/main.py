@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from app.ai_extractor import extract_opportunities
 from app.buyer_discovery import discover_buyers_for_clusters
 from app.company_discovery import deduplicate_companies, discover_companies_for_clusters, discover_score_filter
+from app.decision_maker_discovery import discover_decision_makers_batch
 from app.clusterer import cluster_opportunities
 from app.expander import expand_keyword
 from app.saas_generator import generate_saas_ideas
@@ -256,4 +257,65 @@ def validate_companies_endpoint(request: KeywordRequest):
             }
             for c in rejected
         ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /discover-decision-makers
+# ---------------------------------------------------------------------------
+
+@app.post("/discover-decision-makers")
+def discover_decision_makers_endpoint(request: KeywordRequest):
+    """Full pipeline: expand → crawl → extract → score → cluster →
+    buyer profiles → companies → decision makers.
+
+    Processes only the top 3 highest-scoring companies per cluster to
+    stay within Gemini rate limits. Returns decision-maker role profiles
+    with buying-power scores and LinkedIn search queries.
+
+    Limitations: no email discovery, no LinkedIn scraping, no personal data.
+    """
+    try:
+        posts, scored_opps, expanded_terms = _collect_and_score(request.keyword)
+    except EnvironmentError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Pipeline error: {exc}")
+
+    clusters = cluster_opportunities(scored_opps)
+    buyer_profiles = discover_buyers_for_clusters(clusters)
+    raw, filtered_companies, company_metrics = discover_score_filter(clusters, buyer_profiles)
+
+    # Build lookup maps for the DM discovery
+    clusters_by_name = {c["cluster_name"]: c for c in clusters}
+    buyer_roles_by_cluster = {
+        p.cluster_name: p.buyer_roles for p in buyer_profiles
+    }
+
+    # Cap to top 3 companies per cluster to manage Gemini quota
+    top_companies: list[dict] = []
+    seen_clusters: dict[str, int] = {}
+    for company in filtered_companies:
+        cl = company.get("cluster", "")
+        if seen_clusters.get(cl, 0) < 3:
+            top_companies.append(company)
+            seen_clusters[cl] = seen_clusters.get(cl, 0) + 1
+
+    dm_results = discover_decision_makers_batch(
+        top_companies, clusters_by_name, buyer_roles_by_cluster
+    )
+
+    return {
+        "market_summary": {
+            "keyword": request.keyword,
+            "expanded_terms": expanded_terms,
+            "total_posts": len(posts),
+            "total_clusters": len(clusters),
+            **company_metrics,
+            "companies_analyzed_for_dm": len(top_companies),
+        },
+        "clusters": clusters,
+        "buyer_profiles": [p.model_dump() for p in buyer_profiles],
+        "companies": filtered_companies,
+        "decision_makers": [dm.model_dump() for dm in dm_results],
     }

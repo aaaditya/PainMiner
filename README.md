@@ -198,6 +198,65 @@ python scripts/batch_analysis.py
 
 Runs the full pipeline across 10 niches and prints a ranked market report.
 
+
+## Decision maker discovery
+
+`app/decision_maker_discovery.py` — `discover_decision_makers(company, cluster)`
+
+Given a discovered company and its market cluster, Gemini infers the decision-maker roles most likely to evaluate and approve a software purchase.
+
+### Output per company
+
+```json
+{
+  "company_name": "Livingintown Property Management",
+  "website": "https://livingintown.com",
+  "cluster": "Tenant Communication",
+  "decision_makers": [
+    {
+      "name": "",
+      "title": "Director of Property Management",
+      "seniority": "Director",
+      "department": "Property Management",
+      "buying_power": 8,
+      "linkedin_query": "site:linkedin.com/in \"Director of Property Management\" \"Livingintown\"",
+      "reason": "Responsible for all PM operations and technology decisions."
+    }
+  ]
+}
+```
+
+### Buying-power scale
+
+| Score | Level |
+|---|---|
+| 10 | Owner / Founder / CEO / VP |
+| 8 | Director |
+| 7 | Regional Manager / Senior Manager |
+| 6 | Manager / Portfolio Manager |
+| 4 | Coordinator / Associate |
+| 2 | Individual Contributor |
+
+### LinkedIn query generation
+
+Each role produces a Google `site:` query to find profiles without scraping LinkedIn directly:
+
+```
+site:linkedin.com/in "Director of Property Management" "Livingintown Property Management"
+```
+
+### Role-priority fallback table
+
+When Gemini is unavailable, a built-in table supplies prioritized roles by industry:
+Property Management, Construction, Warehouse, Dental, Accounting, Restaurant, Gym.
+
+### Limitations
+
+- **No email discovery** — email addresses are never collected or inferred
+- **No LinkedIn scraping** — only search query strings are generated
+- **No personal data** — `name` field is always empty; output represents role profiles, not real individuals
+- **No lead enrichment** — that is a future phase
+
 ## Company quality scoring
 
 After discovery, every company passes through a two-stage quality filter in `app/company_scorer.py`.
