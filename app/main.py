@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from app.ai_extractor import extract_opportunities
 from app.buyer_discovery import discover_buyers_for_clusters
+from app.company_discovery import deduplicate_companies, discover_companies_for_clusters
 from app.clusterer import cluster_opportunities
 from app.expander import expand_keyword
 from app.saas_generator import generate_saas_ideas
@@ -167,4 +168,43 @@ def discover_buyers_endpoint(request: KeywordRequest):
         "expanded_terms": expanded_terms,
         "clusters": clusters,
         "buyer_profiles": [p.model_dump() for p in buyer_profiles],
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /discover-companies
+# ---------------------------------------------------------------------------
+
+@app.post("/discover-companies")
+def discover_companies_endpoint(request: KeywordRequest):
+    """Full pipeline: expand → crawl → extract → score → cluster →
+    buyer profiles → company discovery.
+
+    Returns a market summary, all clusters, buyer profiles, and a deduplicated
+    list of real companies matched to each cluster's buyer persona.
+    """
+    try:
+        posts, scored, expanded_terms = _collect_and_score(request.keyword)
+    except EnvironmentError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Pipeline error: {exc}")
+
+    clusters = cluster_opportunities(scored)
+    buyer_profiles = discover_buyers_for_clusters(clusters)
+    cluster_companies = discover_companies_for_clusters(clusters, buyer_profiles)
+    companies = deduplicate_companies(cluster_companies)
+
+    return {
+        "market_summary": {
+            "keyword": request.keyword,
+            "expanded_terms": expanded_terms,
+            "total_posts": len(posts),
+            "total_clusters": len(clusters),
+            "total_companies": sum(len(cr.companies) for cr in cluster_companies),
+            "unique_companies": len(companies),
+        },
+        "clusters": clusters,
+        "buyer_profiles": [p.model_dump() for p in buyer_profiles],
+        "companies": companies,
     }
