@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from app.ai_extractor import extract_opportunities
 from app.buyer_discovery import discover_buyers_for_clusters
-from app.company_discovery import deduplicate_companies, discover_companies_for_clusters
+from app.company_discovery import deduplicate_companies, discover_companies_for_clusters, discover_score_filter
 from app.clusterer import cluster_opportunities
 from app.expander import expand_keyword
 from app.saas_generator import generate_saas_ideas
@@ -192,19 +192,68 @@ def discover_companies_endpoint(request: KeywordRequest):
 
     clusters = cluster_opportunities(scored)
     buyer_profiles = discover_buyers_for_clusters(clusters)
-    cluster_companies = discover_companies_for_clusters(clusters, buyer_profiles)
-    companies = deduplicate_companies(cluster_companies)
+    raw, filtered, metrics = discover_score_filter(clusters, buyer_profiles)
 
     return {
         "market_summary": {
             "keyword": request.keyword,
             "expanded_terms": expanded_terms,
-            "total_posts": len(posts),
-            "total_clusters": len(clusters),
-            "total_companies": sum(len(cr.companies) for cr in cluster_companies),
-            "unique_companies": len(companies),
+            **metrics,
         },
         "clusters": clusters,
         "buyer_profiles": [p.model_dump() for p in buyer_profiles],
-        "companies": companies,
+        "companies": filtered,
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /validate-companies
+# ---------------------------------------------------------------------------
+
+@app.post("/validate-companies")
+def validate_companies_endpoint(request: KeywordRequest):
+    """Full pipeline + quality scoring — returns raw vs filtered companies
+    with per-company scoring details and removal reasons.
+    """
+    try:
+        posts, scored_opps, expanded_terms = _collect_and_score(request.keyword)
+    except EnvironmentError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Pipeline error: {exc}")
+
+    clusters = cluster_opportunities(scored_opps)
+    buyer_profiles = discover_buyers_for_clusters(clusters)
+    raw, filtered, metrics = discover_score_filter(clusters, buyer_profiles)
+
+    precision_before = 0.0
+    precision_after = 0.0
+    if raw:
+        valid_before = sum(1 for c in raw if c.get("company_score", 5) >= 6)
+        precision_before = round(valid_before / len(raw), 3)
+    if raw:
+        precision_after = round(len(filtered) / len(raw), 3)
+
+    rejected = [c for c in raw if c not in filtered]
+
+    return {
+        "market": request.keyword,
+        "quality_metrics": {
+            **metrics,
+            "precision_before": precision_before,
+            "precision_after": precision_after,
+            "precision_improvement": round(precision_after - precision_before, 3),
+        },
+        "raw_companies": raw,
+        "filtered_companies": filtered,
+        "rejected_companies": [
+            {
+                "name": c.get("name"),
+                "website": c.get("website"),
+                "company_score": c.get("company_score"),
+                "rejection_category": c.get("rejection_category"),
+                "reasons": c.get("reasons", []),
+            }
+            for c in rejected
+        ],
     }

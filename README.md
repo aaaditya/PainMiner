@@ -198,6 +198,38 @@ python scripts/batch_analysis.py
 
 Runs the full pipeline across 10 niches and prints a ranked market report.
 
+## Company quality scoring
+
+After discovery, every company passes through a two-stage quality filter in `app/company_scorer.py`.
+
+### Stage 1 — Rule-based scoring (always runs)
+
+| Signal | Points | Examples |
+|---|---|---|
+| Domain contains media/ranking word | −5 | `multihousingnews.com` |
+| Directory / ranking text | −4 | "top companies", "best companies", "list of" |
+| Media / publication text | −4 | "news", "magazine", "blog", "article" |
+| Aggregator text | −4 | "marketplace", "vendor directory", "listing site" |
+| Official company page indicator | +1 | "About Us", "Services", "Request Demo" |
+| Company size language | +1 | "units managed", "employees", "clients served" |
+| Business voice | +1 | "we manage", "we serve", "our customers" |
+
+Base score: **7** (assume valid unless negatives drop it below threshold).  
+Threshold: `company_score >= 6`.
+
+### Stage 2 — Gemini validation (borderline only, score 4–7)
+
+Borderline companies are sent to Gemini for classification:
+
+- **A) operating_business** → survives
+- **B) media**, **C) directory**, **D) article/listicle**, **E) association** → rejected
+
+Falls back to rule-based decision if Gemini is unavailable.
+
+### POST /validate-companies
+
+Returns raw vs filtered companies with per-company scores, removal reasons, and precision metrics.
+
 ## Architecture
 
 ```

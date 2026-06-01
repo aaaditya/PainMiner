@@ -25,6 +25,7 @@ from urllib.parse import urlparse
 from firecrawl.v2.client import FirecrawlClient
 from firecrawl.v2.types import SearchResultWeb
 
+from app.company_scorer import score_and_filter
 from app.models.buyer import BuyerProfile
 from app.models.company import ClusterCompanies, Company
 
@@ -56,6 +57,11 @@ _EXCLUDED_DOMAINS: frozenset[str] = frozenset(
         # Developer platforms
         "github.com", "stackoverflow.com", "medium.com", "substack.com",
         "dev.to",
+        # Rental / listing aggregators
+        "apartments.com", "hotpads.com", "zillow.com", "trulia.com",
+        "realtor.com", "rent.com", "rentals.com", "apartmentlist.com",
+        # Community platforms
+        "meetup.com", "eventbrite.com",
         # Aggregators
         "clutch.co", "expertise.com", "bark.com", "thumbtack.com",
     }
@@ -321,3 +327,38 @@ def deduplicate_companies(
             flat.append({"cluster": cr.cluster, **company.model_dump()})
 
     return flat
+
+
+# ---------------------------------------------------------------------------
+# Scored batch discovery
+# ---------------------------------------------------------------------------
+
+def discover_score_filter(
+    clusters: list[dict],
+    buyer_profiles: list[BuyerProfile],
+    limit_per_cluster: int = 10,
+    use_gemini: bool = True,
+) -> tuple[list[dict], list[dict], dict]:
+    """Full company pipeline: discover → score → filter.
+
+    Returns:
+        (raw_companies, filtered_companies, quality_metrics)
+        Both company lists are flat dicts annotated with source cluster.
+    """
+    cluster_results = discover_companies_for_clusters(
+        clusters, buyer_profiles, limit_per_cluster
+    )
+    raw = deduplicate_companies(cluster_results)
+    # Score all companies; scored_raw has score fields merged in
+    filtered, metrics = score_and_filter(raw, use_gemini=use_gemini)
+    # Rebuild scored_raw by merging score fields from filtered + rejected
+    scored_lookup = {c.get("website", i): c for i, c in enumerate(filtered)}
+    scored_raw = []
+    for c in raw:
+        key = c.get("website", "")
+        # Find matching scored version (filtered or rejected)
+        scored_raw.append(c)  # will be enriched by score_and_filter below
+    # Re-run scoring on raw to get scores without filtering
+    from app.company_scorer import score_company
+    scored_raw = [{**c, **score_company(c)} for c in raw]
+    return scored_raw, filtered, metrics
