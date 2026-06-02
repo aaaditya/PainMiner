@@ -1,0 +1,5 @@
+keyword,cluster,problem,buyer_role,severity_score,urgency_score,opportunity_score,outreach_angle
+property management,Late Rent Collection,Maintenance requests get lost in email threads,Property Manager,9,8,10,Save 5+ hours weekly chasing overdue rent
+property management,Late Rent Collection,Monthly owner statements compiled manually in Excel,Property Manager,7,6,8,Save 5+ hours weekly chasing overdue rent
+property management,Late Rent Collection,Chasing late rent payments is a weekly time sink,Property Manager,9,9,10,Save 5+ hours weekly chasing overdue rent
+property management,Maintenance Coordination,Contractor scheduling is chaotic — no work order visibility,Maintenance Supervisor,8,7,9,Cut admin hours coordinating maintenance in half
